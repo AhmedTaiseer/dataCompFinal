@@ -81,7 +81,13 @@ def load_models():
         except:
             categorical_imputer = None
             
-        return model, label_encoders, numeric_imputer, categorical_imputer
+        # Get the number of features the imputer expects
+        if hasattr(numeric_imputer, 'statistics_'):
+            n_features = len(numeric_imputer.statistics_)
+        else:
+            n_features = None
+            
+        return model, label_encoders, numeric_imputer, categorical_imputer, n_features
     except FileNotFoundError as e:
         st.error(f"""
         Warning: Model files not found! Error: {e}
@@ -94,12 +100,16 @@ def load_models():
         - numeric_imputer.pkl
         - categorical_imputer.pkl (optional)
         """)
-        return None, None, None, None
+        return None, None, None, None, None
 
 # Load models
-model, label_encoders, numeric_imputer, categorical_imputer = load_models()
+model, label_encoders, numeric_imputer, categorical_imputer, expected_n_features = load_models()
 
 if model is not None:
+    # Display expected features info
+    with st.expander("Model Information"):
+        st.write(f"Expected numeric features: {expected_n_features if expected_n_features else 'Unknown'}")
+    
     # Create two columns
     col1, col2 = st.columns([2, 1])
     
@@ -200,11 +210,14 @@ if model is not None:
                     payment_method = st.selectbox("Payment Method", ["Credit Card", "Debit Card", "PayPal"])
             
             # Additional features if they exist
+            additional_features = {}
             if 'season' in label_encoders:
                 seasons = label_encoders['season'].classes_.tolist()
                 season = st.selectbox("Season", options=seasons)
+                additional_features['season'] = season
             else:
                 season = st.selectbox("Season", ["Spring", "Summer", "Fall", "Winter"])
+                additional_features['season'] = season
             
             # Submit button
             submitted = st.form_submit_button("Predict Return Probability", use_container_width=True)
@@ -284,15 +297,34 @@ if model is not None:
                 # Create DataFrame with proper column names
                 input_df = pd.DataFrame([input_data])
                 
-                # Define numeric columns in the correct order
-                numeric_cols = ['price', 'discount', 'final_price', 'review_count', 'stock', 
-                              'seller_rating', 'shipping_time_days']
+                # Define all possible numeric columns based on training
+                all_numeric_cols = ['price', 'discount', 'final_price', 'review_count', 'stock', 
+                                   'seller_rating', 'shipping_time_days']
+                
+                # Check if there might be additional numeric columns from training
+                # We need to ensure we have exactly the number of features the imputer expects
+                numeric_cols_to_use = all_numeric_cols.copy()
                 
                 # Extract numeric columns
-                input_numeric = input_df[numeric_cols]
+                input_numeric = input_df[numeric_cols_to_use]
                 
                 # Apply imputer - convert to array to avoid feature name issues
                 input_numeric_array = input_numeric.values
+                
+                # Check if the number of features matches what the imputer expects
+                if expected_n_features and input_numeric_array.shape[1] != expected_n_features:
+                    st.warning(f"Feature count mismatch. Expected {expected_n_features} but got {input_numeric_array.shape[1]}. Adjusting...")
+                    
+                    # If we need more features, add placeholder columns
+                    if input_numeric_array.shape[1] < expected_n_features:
+                        missing_cols = expected_n_features - input_numeric_array.shape[1]
+                        placeholder_cols = np.zeros((input_numeric_array.shape[0], missing_cols))
+                        input_numeric_array = np.hstack([input_numeric_array, placeholder_cols])
+                    # If we have too many features, trim them
+                    else:
+                        input_numeric_array = input_numeric_array[:, :expected_n_features]
+                
+                # Apply imputer
                 input_numeric_imputed = numeric_imputer.transform(input_numeric_array)
                 
                 # Add categorical columns if they exist in training
@@ -457,6 +489,7 @@ if model is not None:
             except Exception as e:
                 st.error(f"An error occurred during prediction: {str(e)}")
                 st.info("Please check that all input values are valid and try again.")
+                st.write("Debug info - Expected features:", expected_n_features)
 
 else:
     # Show instructions if model not found
