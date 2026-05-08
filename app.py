@@ -315,7 +315,7 @@ if model is not None:
                 if probability > 70:
                     st.markdown(f"""
                     <div class="prediction-box prediction-high-risk">
-                        <h2>⚠️ HIGH RETURN RISK</h2>
+                        <h2> HIGH RETURN RISK</h2>
                         <p>This product has a {probability:.1f}% probability of being returned.</p>
                         <p><strong>Recommendation:</strong> Review product quality, improve descriptions, or optimize pricing.</p>
                     </div>
@@ -387,7 +387,7 @@ if model is not None:
                         st.markdown("- ℹ Seasonal factor may influence returns")
                 
                 # Actionable insights
-                st.markdown("### 💡 Actionable Insights")
+                st.markdown("###  Actionable Insights")
                 
                 if probability > 50:
                     insights = []
@@ -424,7 +424,7 @@ if model is not None:
 
 else:
     st.warning("""
-    ### ⚠️ Model Files Not Found
+    ###  Model Files Not Found
     
     To use this app, you need to first train and save the model by running `project.py`.
     
