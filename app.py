@@ -8,7 +8,7 @@ warnings.filterwarnings('ignore')
 # Page configuration
 st.set_page_config(
     page_title="Amazon Return Predictor",
-    page_icon="",
+    page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -64,20 +64,26 @@ st.markdown("""
 st.markdown('<div class="main-header">Amazon Product Return Predictor</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Predict whether a product is likely to be returned based on various features</div>', unsafe_allow_html=True)
 
-# Load the trained model only
+# Load all necessary preprocessing objects
 @st.cache_resource
-def load_model():
-    """Load only the trained model"""
+def load_model_and_preprocessors():
+    """Load the trained model and all preprocessing objects"""
     try:
         model = joblib.load('svm_classification_model.pkl')
         label_encoders = joblib.load('label_encoders.pkl')
-        return model, label_encoders
+        numeric_imputer = joblib.load('numeric_imputer.pkl')
+        categorical_imputer = joblib.load('categorical_imputer.pkl')
+        
+        # Get feature names from the training data (you'll need to save these in project.py)
+        # For now, I'm defining them based on typical Amazon dataset
+        return model, label_encoders, numeric_imputer, categorical_imputer
     except FileNotFoundError as e:
         st.error(f"Model files not found: {e}")
-        return None, None
+        st.info("Please run project.py first to generate the model files.")
+        return None, None, None, None
 
-# Load model
-model, label_encoders = load_model()
+# Load model and preprocessors
+model, label_encoders, numeric_imputer, categorical_imputer = load_model_and_preprocessors()
 
 if model is not None:
     # Create two columns
@@ -141,29 +147,42 @@ if model is not None:
                 )
             
             with col1c:
+                # Get categories from label encoders if available
                 if 'category' in label_encoders:
                     categories = label_encoders['category'].classes_.tolist()
                     category = st.selectbox("Category", options=categories)
                 else:
-                    category = "Electronics"
+                    category = st.text_input("Category", value="Electronics")
                 
                 if 'device' in label_encoders:
                     devices = label_encoders['device'].classes_.tolist()
                     device = st.selectbox("Device Used", options=devices)
                 else:
-                    device = "Mobile"
+                    device = st.selectbox("Device Used", options=["Mobile", "Desktop", "Tablet"])
                 
                 if 'payment_method' in label_encoders:
                     payment_methods = label_encoders['payment_method'].classes_.tolist()
                     payment_method = st.selectbox("Payment Method", options=payment_methods)
                 else:
-                    payment_method = "Credit Card"
+                    payment_method = st.selectbox("Payment Method", options=["Credit Card", "Debit Card", "PayPal"])
             
-            if 'season' in label_encoders:
-                seasons = label_encoders['season'].classes_.tolist()
-                season = st.selectbox("Season", options=seasons)
-            else:
-                season = "Summer"
+            # Additional fields that might be in your model
+            col_extra1, col_extra2 = st.columns(2)
+            
+            with col_extra1:
+                if 'season' in label_encoders:
+                    seasons = label_encoders['season'].classes_.tolist()
+                    season = st.selectbox("Season", options=seasons)
+                else:
+                    season = st.selectbox("Season", options=["Spring", "Summer", "Fall", "Winter"])
+            
+            with col_extra2:
+                # Add any other categorical features your model expects
+                if 'brand' in label_encoders:
+                    brands = label_encoders['brand'].classes_.tolist()
+                    brand = st.selectbox("Brand", options=brands)
+                else:
+                    brand = "Generic"
             
             submitted = st.form_submit_button("Predict Return Probability", use_container_width=True)
     
@@ -171,12 +190,15 @@ if model is not None:
         st.markdown("### Model Information")
         st.markdown("""
         <div class="metric-card">
-            <strong>Model Type:</strong> Linear SVM<br>
+            <strong>Model Type:</strong> Linear SVM with Calibration<br>
             <strong>Task:</strong> Binary Classification<br>
             <strong>Target:</strong> Product Return Prediction<br>
-            <strong>Features:</strong> Price, Discount, Final Price,<br>
-            Reviews, Stock, Seller Rating, Shipping Time,<br>
-            Category, Device, Payment Method, Season
+            <strong>Features Used:</strong><br>
+            • Numeric: Price, Discount, Final Price,<br>
+            &nbsp;&nbsp;Review Count, Stock, Seller Rating,<br>
+            &nbsp;&nbsp;Shipping Time<br>
+            • Categorical: Category, Device,<br>
+            &nbsp;&nbsp;Payment Method, Season, Brand
         </div>
         """, unsafe_allow_html=True)
         
@@ -192,64 +214,63 @@ if model is not None:
     if submitted:
         with st.spinner("Analyzing product data..."):
             try:
-                # Calculate final price
+                # Calculate final price (this matches training preprocessing)
                 final_price = price * (1 - discount / 100)
                 
-                # Create feature array in the exact order the model expects
-                # First, encode categorical variables
-                cat_encoded = []
+                # Create a DataFrame with all features in the same order as training
+                # First, create a dictionary of all features
+                input_data = {
+                    'price': [price],
+                    'discount': [discount],
+                    'final_price': [final_price],
+                    'review_count': [review_count],
+                    'stock': [stock],
+                    'seller_rating': [seller_rating],
+                    'shipping_time_days': [shipping_time]
+                }
                 
-                if 'category' in label_encoders:
-                    try:
-                        cat_encoded.append(label_encoders['category'].transform([category])[0])
-                    except:
-                        cat_encoded.append(label_encoders['category'].transform([label_encoders['category'].classes_[0]])[0])
-                else:
-                    cat_encoded.append(0)
+                # Add categorical features
+                categorical_cols = ['category', 'device', 'payment_method', 'season']
+                categorical_values = [category, device, payment_method, season]
                 
-                if 'device' in label_encoders:
-                    try:
-                        cat_encoded.append(label_encoders['device'].transform([device])[0])
-                    except:
-                        cat_encoded.append(label_encoders['device'].transform([label_encoders['device'].classes_[0]])[0])
-                else:
-                    cat_encoded.append(0)
+                for col, val in zip(categorical_cols, categorical_values):
+                    if col in label_encoders:
+                        input_data[col] = [val]
                 
-                if 'payment_method' in label_encoders:
-                    try:
-                        cat_encoded.append(label_encoders['payment_method'].transform([payment_method])[0])
-                    except:
-                        cat_encoded.append(label_encoders['payment_method'].transform([label_encoders['payment_method'].classes_[0]])[0])
-                else:
-                    cat_encoded.append(0)
+                # Convert to DataFrame
+                input_df = pd.DataFrame(input_data)
                 
-                if 'season' in label_encoders:
-                    try:
-                        cat_encoded.append(label_encoders['season'].transform([season])[0])
-                    except:
-                        cat_encoded.append(0)
-                else:
-                    cat_encoded.append(0)
+                # Process categorical features (same as training)
+                for col in categorical_cols:
+                    if col in input_df.columns and col in label_encoders:
+                        input_df[col] = input_df[col].astype(str)
+                        # Handle unknown categories
+                        known_classes = set(label_encoders[col].classes_)
+                        for idx, val in enumerate(input_df[col]):
+                            if val not in known_classes:
+                                input_df.loc[idx, col] = label_encoders[col].classes_[0]
+                        input_df[col] = label_encoders[col].transform(input_df[col])
                 
-                # Create numeric feature array
-                # Order: price, discount, final_price, review_count, stock, seller_rating, shipping_time_days
-                numeric_features = np.array([[
-                    price,
-                    discount,
-                    final_price,
-                    review_count,
-                    stock,
-                    seller_rating,
-                    shipping_time
-                ]])
+                # Ensure all expected columns from training are present
+                # Get the feature names from the model's training data
+                # Since the pipeline expects specific columns, we need to match exactly
                 
-                # Combine numeric and categorical features
-                categorical_features = np.array([cat_encoded])
-                final_features = np.hstack([numeric_features, categorical_features])
+                # Create a complete feature vector with all numeric columns first
+                numeric_features = ['price', 'discount', 'final_price', 'review_count', 
+                                  'stock', 'seller_rating', 'shipping_time_days']
                 
+                # Make sure all numeric features are present
+                for col in numeric_features:
+                    if col not in input_df.columns:
+                        input_df[col] = 0
+                
+                # Create feature array in the correct order
+                feature_array = input_df[numeric_features + categorical_cols].values
+                
+                # The pipeline will handle scaling automatically
                 # Make prediction
-                prediction_proba = model.predict_proba(final_features)[0]
-                prediction = model.predict(final_features)[0]
+                prediction_proba = model.predict_proba(feature_array)[0]
+                prediction = model.predict(feature_array)[0]
                 
                 # Display results
                 st.markdown("---")
@@ -278,7 +299,7 @@ if model is not None:
                 if probability > 70:
                     st.markdown(f"""
                     <div class="prediction-box prediction-high-risk">
-                        <h2>HIGH RETURN RISK</h2>
+                        <h2> HIGH RETURN RISK</h2>
                         <p>This product has a {probability:.1f}% probability of being returned.</p>
                         <p><strong>Recommendation:</strong> Review product quality, improve descriptions, or optimize pricing.</p>
                     </div>
@@ -286,15 +307,15 @@ if model is not None:
                 elif probability > 40:
                     st.markdown(f"""
                     <div class="prediction-box" style="background-color: #fff3cd; border: 2px solid #ffc107;">
-                        <h2>MODERATE RETURN RISK</h2>
+                        <h2>⚡ MODERATE RETURN RISK</h2>
                         <p>This product has a {probability:.1f}% probability of being returned.</p>
                         <p><strong>Recommendation:</strong> Monitor closely and consider slight improvements.</p>
                     </div>
                     """, unsafe_allow_html=True)
                 else:
                     st.markdown(f"""
-                    <div class="prediction-box prediction-low-risk">
-                        <h2>LOW RETURN RISK</h2>
+                    <div clas="prediction-box prediction-low-risk">
+                        <h2> LOW RETURN RISK</h2>
                         <p>This product has a {probability:.1f}% probability of being returned.</p>
                         <p><strong>Recommendation:</strong> Product seems promising for continued sales.</p>
                     </div>
@@ -309,68 +330,78 @@ if model is not None:
                     st.markdown("**Product Metrics:**")
                     
                     if price > 100:
-                        st.markdown("- [!] High price may increase return risk")
+                        st.markdown("-  High price may increase return risk")
                     elif price < 20:
-                        st.markdown("- [OK] Low price generally reduces return risk")
+                        st.markdown("-  Low price generally reduces return risk")
                     else:
-                        st.markdown("- [v] Price is in optimal range")
+                        st.markdown("-  Price is in optimal range")
                     
                     if discount > 30:
-                        st.markdown("- [!] High discount might indicate quality issues")
+                        st.markdown("-  High discount might indicate quality issues")
                     elif discount > 0:
-                        st.markdown("- [v] Moderate discount is attractive")
+                        st.markdown("- ✓ Moderate discount is attractive")
                     else:
-                        st.markdown("- [i] No discount offered")
+                        st.markdown("- ℹ No discount offered")
                     
                     if shipping_time > 7:
-                        st.markdown("- [!] Long shipping time increases return likelihood")
+                        st.markdown("-  Long shipping time increases return likelihood")
                     elif shipping_time <= 3:
-                        st.markdown("- [OK] Fast shipping reduces return risk")
+                        st.markdown("-  Fast shipping reduces return risk")
                     else:
-                        st.markdown("- [v] Standard shipping time")
+                        st.markdown("- Standard shipping time")
                 
                 with col_b:
                     st.markdown("**Quality Indicators:**")
                     
                     if seller_rating < 3.5:
-                        st.markdown("- [!] Low seller rating increases return risk")
+                        st.markdown("- Low seller rating increases return risk")
                     elif seller_rating >= 4.5:
-                        st.markdown("- [OK] High seller rating reduces returns")
+                        st.markdown("-  High seller rating reduces returns")
                     else:
-                        st.markdown("- [v] Acceptable seller rating")
+                        st.markdown("-  Acceptable seller rating")
                     
                     if review_count < 10:
-                        st.markdown("- [!] Few reviews may indicate new product")
+                        st.markdown("-  Few reviews may indicate new product")
                     elif review_count > 100:
-                        st.markdown("- [OK] Many reviews suggest established product")
+                        st.markdown("-  Many reviews suggest established product")
                     else:
-                        st.markdown("- [v] Adequate number of reviews")
+                        st.markdown("-  Adequate number of reviews")
                     
                     if stock > 1000:
-                        st.markdown("- [i] High stock might indicate overstocking")
+                        st.markdown("- ℹ High stock might indicate overstocking")
                     else:
-                        st.markdown("- [v] Reasonable stock level")
+                        st.markdown("-  Reasonable stock level")
                 
                 # Actionable insights
-                st.markdown("### Actionable Insights")
+                st.markdown("###  Actionable Insights")
                 
                 if probability > 50:
+                    insights = []
                     if discount > 20:
-                        st.markdown("- Consider reducing discount and improving product quality perception")
+                        insights.append("- Consider reducing discount and improving product quality perception")
                     if seller_rating < 4.0:
-                        st.markdown("- Work on improving seller rating through better customer service")
+                        insights.append("- Work on improving seller rating through better customer service")
                     if shipping_time > 5:
-                        st.markdown("- Optimize shipping processes or offer expedited shipping options")
+                        insights.append("- Optimize shipping processes or offer expedited shipping options")
                     if review_count < 20:
-                        st.markdown("- Encourage more customer reviews to build trust")
+                        insights.append("- Encourage more customer reviews to build trust")
+                    if price > 100:
+                        insights.append("- Consider price optimization or bundle deals")
+                    
+                    if insights:
+                        for insight in insights:
+                            st.markdown(insight)
+                    else:
+                        st.markdown("- Review product details and consider quality improvements")
                 else:
-                    st.markdown("- Current configuration is promising for low returns")
+                    st.markdown("-  Current configuration is promising for low returns")
                     if discount < 20:
-                        st.markdown("- Consider small discounts to boost sales without increasing return risk")
-                    st.markdown("- Maintain high seller rating and fast shipping")
+                        st.markdown("-  Consider small discounts to boost sales without increasing return risk")
+                    st.markdown("-  Maintain high seller rating and fast shipping")
+                    st.markdown("-  Continue gathering positive customer reviews")
                 
                 st.markdown("---")
-                st.caption("Disclaimer: This prediction is based on machine learning model analysis and should be used as a guideline, not an absolute guarantee.")
+                st.caption(" Disclaimer: This prediction is based on machine learning model analysis and should be used as a guideline, not an absolute guarantee.")
                 
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
@@ -378,12 +409,15 @@ if model is not None:
 
 else:
     st.warning("""
-    ### Getting Started
+    ###  Model Files Not Found
     
-    To use this app, you need:
+    To use this app, you need to first train and save the model by running `project.py`.
     
-    1. Trained model file: `svm_classification_model.pkl`
-    2. Label encoders file: `label_encoders.pkl`
+    Required files:
+    - `svm_classification_model.pkl`
+    - `label_encoders.pkl`
+    - `numeric_imputer.pkl`
+    - `categorical_imputer.pkl`
     
     Run your training script to generate these files, then restart the app.
     """)
