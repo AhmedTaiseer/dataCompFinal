@@ -62,7 +62,7 @@ st.markdown("""
 
 # Title and description
 st.markdown('<div class="main-header">Amazon Product Return Predictor</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Predict whether a product is likely to be returned based on various features</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Predict whether a product is likely to be returned based on product features</div>', unsafe_allow_html=True)
 
 # Load all necessary preprocessing objects
 @st.cache_resource
@@ -98,9 +98,9 @@ if model is not None:
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.markdown("### Input Product Information")
+        st.markdown("### Enter Product Information")
         
-        # Create input form
+        # Create input form - ONLY PRODUCT FEATURES visible to user
         with st.form("prediction_form"):
             col1a, col1b, col1c = st.columns(3)
             
@@ -162,54 +162,47 @@ if model is not None:
                 else:
                     category = st.text_input("Category", value="Electronics")
                 
-                # Device dropdown
-                if 'device' in label_encoders:
-                    devices = label_encoders['device'].classes_.tolist()
-                    device = st.selectbox("Device Used", options=devices)
+                # Subcategory (if in model)
+                if 'subcategory' in label_encoders:
+                    subcategories = label_encoders['subcategory'].classes_.tolist()
+                    subcategory = st.selectbox("Subcategory", options=subcategories)
                 else:
-                    device = st.selectbox("Device Used", options=["Mobile", "Desktop", "Tablet"])
+                    subcategory = "General"
                 
-                # Payment method dropdown
-                if 'payment_method' in label_encoders:
-                    payment_methods = label_encoders['payment_method'].classes_.tolist()
-                    payment_method = st.selectbox("Payment Method", options=payment_methods)
+                # Brand (if in model)
+                if 'brand' in label_encoders:
+                    brands = label_encoders['brand'].classes_.tolist()
+                    brand = st.selectbox("Brand", options=brands)
                 else:
-                    payment_method = st.selectbox("Payment Method", options=["Credit Card", "Debit Card", "PayPal"])
+                    brand = "Generic"
             
-            # Season dropdown (always include since it's in the error)
-            col_season, col_extra = st.columns(2)
+            # Only show these if they're actually in the model (product-related)
+            extra_col1, extra_col2 = st.columns(2)
             
-            with col_season:
-                if 'season' in label_encoders:
-                    seasons = label_encoders['season'].classes_.tolist()
-                    season = st.selectbox("Season", options=seasons)
-                else:
-                    season = st.selectbox("Season", options=["Spring", "Summer", "Fall", "Winter"])
+            with extra_col1:
+                if 'color' in label_encoders:
+                    colors = label_encoders['color'].classes_.tolist()
+                    color = st.selectbox("Color", options=colors)
             
-            with col_extra:
-                # Add any other categorical features that might be in your model
-                other_cats = [col for col in categorical_features if col not in ['category', 'device', 'payment_method', 'season']]
-                if other_cats:
-                    additional_inputs = {}
-                    for cat_col in other_cats:
-                        if cat_col in label_encoders:
-                            options = label_encoders[cat_col].classes_.tolist()
-                            additional_inputs[cat_col] = st.selectbox(f"{cat_col.replace('_', ' ').title()}", options=options)
+            with extra_col2:
+                if 'size' in label_encoders:
+                    sizes = label_encoders['size'].classes_.tolist()
+                    size = st.selectbox("Size", options=sizes)
             
             submitted = st.form_submit_button("Predict Return Probability", use_container_width=True)
     
     with col2:
         st.markdown("### Model Information")
-        st.markdown(f"""
+        st.markdown("""
         <div class="metric-card">
             <strong>Model Type:</strong> Linear SVM with Calibration<br>
             <strong>Task:</strong> Binary Classification<br>
             <strong>Target:</strong> Product Return Prediction<br>
-            <strong>Features Used:</strong><br>
-            • Numeric ({len([f for f in numeric_features if f in globals()])}): Price, Discount, Final Price,<br>
-            &nbsp;&nbsp;Review Count, Stock, Seller Rating,<br>
-            &nbsp;&nbsp;Shipping Time<br>
-            • Categorical ({len(categorical_features)}): {', '.join(categorical_features)}
+            <strong>Product Features:</strong><br>
+            • Price, Discount, Final Price<br>
+            • Review Count, Stock, Seller Rating<br>
+            • Shipping Time, Category, Brand<br>
+            • Subcategory, Color, Size
         </div>
         """, unsafe_allow_html=True)
         
@@ -228,7 +221,8 @@ if model is not None:
                 # Calculate final price (this matches training preprocessing)
                 final_price = price * (1 - discount / 100)
                 
-                # Create a dictionary with all numeric features
+                # Create a dictionary with ALL features the model expects
+                # User-visible product features
                 input_dict = {
                     'price': price,
                     'discount': discount,
@@ -236,41 +230,89 @@ if model is not None:
                     'review_count': review_count,
                     'stock': stock,
                     'seller_rating': seller_rating,
-                    'shipping_time_days': shipping_time
+                    'shipping_time_days': shipping_time,
+                    'category': category,
+                    'subcategory': subcategory,
+                    'brand': brand
                 }
                 
-                # Add categorical features
-                input_dict['category'] = category
-                input_dict['device'] = device
-                input_dict['payment_method'] = payment_method
-                input_dict['season'] = season
+                # Add optional product features if they exist
+                if 'color' in locals():
+                    input_dict['color'] = color
+                if 'size' in locals():
+                    input_dict['size'] = size
                 
-                # Add any additional categorical features
-                if 'additional_inputs' in locals():
-                    for cat_col, value in additional_inputs.items():
-                        input_dict[cat_col] = value
+                # =============================================
+                # BACKGROUND DEFAULT VALUES (NOT SHOWN TO USER)
+                # These are required by the model but hidden from UI
+                # =============================================
+                
+                # User-related fields (set to default/placeholder values)
+                input_dict['user_id'] = 0
+                input_dict['User ID'] = 0
+                input_dict['userid'] = 0
+                input_dict['customer_id'] = 0
+                
+                # Seller-related fields
+                input_dict['seller_id'] = 'default_seller'
+                input_dict['Seller ID'] = 'default_seller'
+                input_dict['sellerid'] = 'default_seller'
+                
+                # Product identifier fields
+                input_dict['product_id'] = 'default_product'
+                input_dict['Product ID'] = 'default_product'
+                input_dict['productid'] = 'default_product'
+                input_dict['asin'] = 'default_asin'
+                input_dict['sku'] = 'default_sku'
+                
+                # Date/time fields
+                input_dict['purchase_date'] = '2024-01-01'
+                input_dict['order_date'] = '2024-01-01'
+                input_dict['date'] = '2024-01-01'
+                input_dict['timestamp'] = '2024-01-01'
+                
+                # Location fields
+                input_dict['location'] = 'default_city'
+                input_dict['city'] = 'default_city'
+                input_dict['state'] = 'default_state'
+                input_dict['zip'] = '00000'
+                input_dict['country'] = 'default_country'
+                
+                # Session/tracking fields
+                input_dict['session_id'] = 'default_session'
+                input_dict['browser_session'] = 'default_session'
+                input_dict['ip_address'] = '0.0.0.0'
+                input_dict['user_agent'] = 'default_agent'
+                
+                # Device and payment (product-related defaults)
+                input_dict['device'] = 'Desktop'
+                input_dict['payment_method'] = 'Credit Card'
+                input_dict['season'] = 'Summer'
                 
                 # Create DataFrame
                 input_df = pd.DataFrame([input_dict])
                 
-                # Process all categorical features
-                for col in categorical_features:
-                    if col in input_df.columns and col in label_encoders:
+                # Process all categorical features that have label encoders
+                for col in label_encoders.keys():
+                    if col in input_df.columns:
                         # Convert to string
                         input_df[col] = input_df[col].astype(str)
-                        # Handle unknown categories by mapping to the most common class
+                        # Handle unknown categories by mapping to the first class
                         known_classes = set(label_encoders[col].classes_)
                         for idx, val in enumerate(input_df[col]):
                             if val not in known_classes:
-                                # Use the first class as default
                                 input_df.loc[idx, col] = label_encoders[col].classes_[0]
                         # Transform using label encoder
                         input_df[col] = label_encoders[col].transform(input_df[col])
+                    else:
+                        # If column is missing, add with default value 0
+                        input_df[col] = 0
                 
                 # Ensure all numeric features are present
-                for col in numeric_features:
-                    if col not in input_df.columns:
-                        input_df[col] = 0
+                if numeric_features:
+                    for col in numeric_features:
+                        if col not in input_df.columns:
+                            input_df[col] = 0
                 
                 # Reorder columns to match training data order if feature_names is available
                 if feature_names:
@@ -281,8 +323,8 @@ if model is not None:
                     # Reorder
                     input_df = input_df[feature_names]
                 else:
-                    # Use the default order: numeric first, then categorical
-                    input_df = input_df[numeric_features + categorical_features]
+                    # Use all available columns
+                    input_df = input_df[sorted(input_df.columns)]
                 
                 # Make prediction
                 prediction_proba = model.predict_proba(input_df)[0]
@@ -382,12 +424,9 @@ if model is not None:
                         st.markdown("-  Many reviews suggest established product")
                     else:
                         st.markdown("-  Adequate number of reviews")
-                    
-                    if season in ['Winter', 'Fall']:
-                        st.markdown("- ℹ Seasonal factor may influence returns")
                 
                 # Actionable insights
-                st.markdown("###  Actionable Insights")
+                st.markdown("### 💡 Actionable Insights")
                 
                 if probability > 50:
                     insights = []
@@ -419,8 +458,7 @@ if model is not None:
                 
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
-                st.error(f"Debug info - Available features: {list(input_df.columns)}")
-                st.info("Please make sure all required features are provided.")
+                st.info("Please try again with different input values.")
 
 else:
     st.warning("""
@@ -431,9 +469,6 @@ else:
     Required files:
     - `svm_classification_model.pkl`
     - `label_encoders.pkl`
-    
-    Also recommended:
-    - `feature_info.pkl` (saves feature names and types)
     
     Run your training script to generate these files, then restart the app.
     """)
