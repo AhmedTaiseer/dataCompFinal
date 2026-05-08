@@ -82,9 +82,11 @@ def load_models():
             categorical_imputer = None
             
         return model, label_encoders, numeric_imputer, categorical_imputer
-    except FileNotFoundError:
-        st.error("""
-        Warning: Model files not found! Please ensure you have trained and saved the model first.
+    except FileNotFoundError as e:
+        st.error(f"""
+        Warning: Model files not found! Error: {e}
+        
+        Please ensure you have trained and saved the model first.
         
         Run your original training script to generate:
         - svm_classification_model.pkl
@@ -176,7 +178,6 @@ if model is not None:
                     )
                 else:
                     category = st.text_input("Category", value="Electronics")
-                    categories = []
                 
                 if 'device' in label_encoders:
                     devices = label_encoders['device'].classes_.tolist()
@@ -233,220 +234,245 @@ if model is not None:
     # Make prediction when form is submitted
     if submitted:
         with st.spinner("Analyzing product data..."):
-            # Prepare input data
-            input_data = {}
-            
-            # Numeric features
-            input_data['price'] = price
-            input_data['discount'] = discount
-            input_data['final_price'] = price * (1 - discount/100)
-            input_data['review_count'] = review_count
-            input_data['stock'] = stock
-            input_data['seller_rating'] = seller_rating
-            input_data['shipping_time_days'] = shipping_time
-            
-            # Categorical features - encode them
-            if 'category' in label_encoders:
-                try:
-                    input_data['category'] = label_encoders['category'].transform([category])[0]
-                except:
-                    # If category not in training, use most common
-                    input_data['category'] = label_encoders['category'].transform([label_encoders['category'].classes_[0]])[0]
-            else:
-                input_data['category'] = 0
-            
-            if 'device' in label_encoders:
-                try:
-                    input_data['device'] = label_encoders['device'].transform([device])[0]
-                except:
-                    input_data['device'] = label_encoders['device'].transform([label_encoders['device'].classes_[0]])[0]
-            else:
-                input_data['device'] = 0
-            
-            if 'payment_method' in label_encoders:
-                try:
-                    input_data['payment_method'] = label_encoders['payment_method'].transform([payment_method])[0]
-                except:
-                    input_data['payment_method'] = label_encoders['payment_method'].transform([label_encoders['payment_method'].classes_[0]])[0]
-            else:
-                input_data['payment_method'] = 0
-            
-            if 'season' in label_encoders:
-                try:
-                    input_data['season'] = label_encoders['season'].transform([season])[0]
-                except:
+            try:
+                # Prepare input data
+                input_data = {}
+                
+                # Numeric features
+                input_data['price'] = price
+                input_data['discount'] = discount
+                input_data['final_price'] = price * (1 - discount/100)
+                input_data['review_count'] = review_count
+                input_data['stock'] = stock
+                input_data['seller_rating'] = seller_rating
+                input_data['shipping_time_days'] = shipping_time
+                
+                # Categorical features - encode them
+                if 'category' in label_encoders:
+                    try:
+                        input_data['category'] = label_encoders['category'].transform([category])[0]
+                    except:
+                        # If category not in training, use most common
+                        input_data['category'] = label_encoders['category'].transform([label_encoders['category'].classes_[0]])[0]
+                else:
+                    input_data['category'] = 0
+                
+                if 'device' in label_encoders:
+                    try:
+                        input_data['device'] = label_encoders['device'].transform([device])[0]
+                    except:
+                        input_data['device'] = label_encoders['device'].transform([label_encoders['device'].classes_[0]])[0]
+                else:
+                    input_data['device'] = 0
+                
+                if 'payment_method' in label_encoders:
+                    try:
+                        input_data['payment_method'] = label_encoders['payment_method'].transform([payment_method])[0]
+                    except:
+                        input_data['payment_method'] = label_encoders['payment_method'].transform([label_encoders['payment_method'].classes_[0]])[0]
+                else:
+                    input_data['payment_method'] = 0
+                
+                if 'season' in label_encoders:
+                    try:
+                        input_data['season'] = label_encoders['season'].transform([season])[0]
+                    except:
+                        input_data['season'] = 0
+                else:
                     input_data['season'] = 0
-            else:
-                input_data['season'] = 0
-            
-            # Create DataFrame
-            input_df = pd.DataFrame([input_data])
-            
-            # Ensure all expected columns are present
-            expected_columns = numeric_imputer.statistics_.shape[0] if hasattr(numeric_imputer, 'statistics_') else len(input_data)
-            
-            # Impute missing values if necessary
-            numeric_cols = ['price', 'discount', 'final_price', 'review_count', 'stock', 
-                          'seller_rating', 'shipping_time_days']
-            input_numeric = input_df[numeric_cols]
-            input_numeric_imputed = numeric_imputer.transform(input_numeric)
-            
-            # Combine features
-            final_input = input_numeric_imputed
-            
-            # Add categorical columns if they exist in training
-            categorical_cols = [col for col in ['category', 'device', 'payment_method', 'season'] 
-                               if col in input_df.columns]
-            if categorical_cols:
-                input_categorical = input_df[categorical_cols].values
-                final_input = np.hstack([final_input, input_categorical])
-            
-            # Make prediction
-            prediction_proba = model.predict_proba(final_input)[0]
-            prediction = model.predict(final_input)[0]
-            
-            # Display results
-            st.markdown("---")
-            st.markdown("## Prediction Results")
-            
-            # Create three columns for results
-            res_col1, res_col2, res_col3 = st.columns(3)
-            
-            probability = prediction_proba[1] * 100
-            
-            with res_col1:
-                st.metric(
-                    label="Return Probability",
-                    value=f"{probability:.1f}%",
-                    delta="High Risk" if probability > 50 else "Low Risk"
-                )
-            
-            with res_col2:
-                prediction_text = "Likely to be Returned" if prediction == 1 else "Unlikely to be Returned"
-                st.metric(
-                    label="Prediction",
-                    value=prediction_text
-                )
-            
-            with res_col3:
-                confidence = max(prediction_proba) * 100
-                st.metric(
-                    label="Confidence",
-                    value=f"{confidence:.1f}%"
-                )
-            
-            # Risk assessment box
-            if probability > 70:
-                st.markdown(f"""
-                <div class="prediction-box prediction-high-risk">
-                    <h2>HIGH RETURN RISK</h2>
-                    <p>This product has a {probability:.1f}% probability of being returned.</p>
-                    <p><strong>Recommendation:</strong> Review product quality, improve descriptions, or optimize pricing.</p>
-                </div>
-                """, unsafe_allow_html=True)
-            elif probability > 40:
-                st.markdown(f"""
-                <div class="prediction-box" style="background-color: #fff3cd; border: 2px solid #ffc107;">
-                    <h2>MODERATE RETURN RISK</h2>
-                    <p>This product has a {probability:.1f}% probability of being returned.</p>
-                    <p><strong>Recommendation:</strong> Monitor closely and consider slight improvements.</p>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div class="prediction-box prediction-low-risk">
-                    <h2>LOW RETURN RISK</h2>
-                    <p>This product has a {probability:.1f}% probability of being returned.</p>
-                    <p><strong>Recommendation:</strong> Product seems promising for continued sales.</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Feature impact analysis
-            st.markdown("### Key Factors Affecting This Prediction")
-            
-            col_a, col_b = st.columns(2)
-            
-            with col_a:
-                st.markdown("**Product Metrics:**")
                 
-                # Price impact
-                if price > 100:
-                    price_impact = "[!] High price may increase return risk"
-                elif price < 20:
-                    price_impact = "[OK] Low price generally reduces return risk"
-                else:
-                    price_impact = "[v] Price is in optimal range"
-                st.markdown(f"- {price_impact}")
+                # Create DataFrame with proper column names
+                input_df = pd.DataFrame([input_data])
                 
-                # Discount impact
-                if discount > 30:
-                    discount_impact = "[!] High discount might indicate quality issues"
-                elif discount > 0:
-                    discount_impact = "[v] Moderate discount is attractive"
-                else:
-                    discount_impact = "[i] No discount offered"
-                st.markdown(f"- {discount_impact}")
+                # Define numeric columns in the correct order
+                numeric_cols = ['price', 'discount', 'final_price', 'review_count', 'stock', 
+                              'seller_rating', 'shipping_time_days']
                 
-                # Shipping impact
-                if shipping_time > 7:
-                    shipping_impact = "[!] Long shipping time increases return likelihood"
-                elif shipping_time <= 3:
-                    shipping_impact = "[OK] Fast shipping reduces return risk"
-                else:
-                    shipping_impact = "[v] Standard shipping time"
-                st.markdown(f"- {shipping_impact}")
-            
-            with col_b:
-                st.markdown("**Quality Indicators:**")
+                # Extract numeric columns
+                input_numeric = input_df[numeric_cols]
                 
-                # Rating impact
-                if seller_rating < 3.5:
-                    rating_impact = "[!] Low seller rating increases return risk"
-                elif seller_rating >= 4.5:
-                    rating_impact = "[OK] High seller rating reduces returns"
-                else:
-                    rating_impact = "[v] Acceptable seller rating"
-                st.markdown(f"- {rating_impact}")
+                # Apply imputer - convert to array to avoid feature name issues
+                input_numeric_array = input_numeric.values
+                input_numeric_imputed = numeric_imputer.transform(input_numeric_array)
                 
-                # Review count impact
-                if review_count < 10:
-                    review_impact = "[!] Few reviews may indicate new product"
-                elif review_count > 100:
-                    review_impact = "[OK] Many reviews suggest established product"
-                else:
-                    review_impact = "[v] Adequate number of reviews"
-                st.markdown(f"- {review_impact}")
+                # Add categorical columns if they exist in training
+                categorical_cols = [col for col in ['category', 'device', 'payment_method', 'season'] 
+                                   if col in input_df.columns]
                 
-                # Stock impact
-                if stock > 1000:
-                    stock_impact = "[i] High stock might indicate overstocking"
+                if categorical_cols:
+                    input_categorical = input_df[categorical_cols].values
+                    final_input = np.hstack([input_numeric_imputed, input_categorical])
                 else:
-                    stock_impact = "[v] Reasonable stock level"
-                st.markdown(f"- {stock_impact}")
-            
-            # Actionable insights
-            st.markdown("### Actionable Insights")
-            
-            insights = []
-            if probability > 50:
-                if discount > 20:
-                    insights.append("- Consider reducing discount and improving product quality perception")
-                if seller_rating < 4.0:
-                    insights.append("- Work on improving seller rating through better customer service")
-                if shipping_time > 5:
-                    insights.append("- Optimize shipping processes or offer expedited shipping options")
-                if review_count < 20:
-                    insights.append("- Encourage more customer reviews to build trust")
-            else:
-                insights.append("- Current configuration is promising for low returns")
-                if discount < 20:
-                    insights.append("- Consider small discounts to boost sales without increasing return risk")
-                insights.append("- Maintain high seller rating and fast shipping")
-            
-            for insight in insights:
-                st.markdown(insight)
-            
-            # Disclaimer
-            st.markdown("---")
-            st.caption("Disclaimer: This prediction is based on machine learning model analysis and should be used as a guideline, not an absolute guarantee. Actual return behavior may vary based on multiple factors.")
+                    final_input = input_numeric_imputed
+                
+                # Make prediction
+                prediction_proba = model.predict_proba(final_input)[0]
+                prediction = model.predict(final_input)[0]
+                
+                # Display results
+                st.markdown("---")
+                st.markdown("## Prediction Results")
+                
+                # Create three columns for results
+                res_col1, res_col2, res_col3 = st.columns(3)
+                
+                probability = prediction_proba[1] * 100
+                
+                with res_col1:
+                    st.metric(
+                        label="Return Probability",
+                        value=f"{probability:.1f}%",
+                        delta="High Risk" if probability > 50 else "Low Risk"
+                    )
+                
+                with res_col2:
+                    prediction_text = "Likely to be Returned" if prediction == 1 else "Unlikely to be Returned"
+                    st.metric(
+                        label="Prediction",
+                        value=prediction_text
+                    )
+                
+                with res_col3:
+                    confidence = max(prediction_proba) * 100
+                    st.metric(
+                        label="Confidence",
+                        value=f"{confidence:.1f}%"
+                    )
+                
+                # Risk assessment box
+                if probability > 70:
+                    st.markdown(f"""
+                    <div class="prediction-box prediction-high-risk">
+                        <h2>HIGH RETURN RISK</h2>
+                        <p>This product has a {probability:.1f}% probability of being returned.</p>
+                        <p><strong>Recommendation:</strong> Review product quality, improve descriptions, or optimize pricing.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                elif probability > 40:
+                    st.markdown(f"""
+                    <div class="prediction-box" style="background-color: #fff3cd; border: 2px solid #ffc107;">
+                        <h2>MODERATE RETURN RISK</h2>
+                        <p>This product has a {probability:.1f}% probability of being returned.</p>
+                        <p><strong>Recommendation:</strong> Monitor closely and consider slight improvements.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div class="prediction-box prediction-low-risk">
+                        <h2>LOW RETURN RISK</h2>
+                        <p>This product has a {probability:.1f}% probability of being returned.</p>
+                        <p><strong>Recommendation:</strong> Product seems promising for continued sales.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Feature impact analysis
+                st.markdown("### Key Factors Affecting This Prediction")
+                
+                col_a, col_b = st.columns(2)
+                
+                with col_a:
+                    st.markdown("**Product Metrics:**")
+                    
+                    # Price impact
+                    if price > 100:
+                        price_impact = "[!] High price may increase return risk"
+                    elif price < 20:
+                        price_impact = "[OK] Low price generally reduces return risk"
+                    else:
+                        price_impact = "[v] Price is in optimal range"
+                    st.markdown(f"- {price_impact}")
+                    
+                    # Discount impact
+                    if discount > 30:
+                        discount_impact = "[!] High discount might indicate quality issues"
+                    elif discount > 0:
+                        discount_impact = "[v] Moderate discount is attractive"
+                    else:
+                        discount_impact = "[i] No discount offered"
+                    st.markdown(f"- {discount_impact}")
+                    
+                    # Shipping impact
+                    if shipping_time > 7:
+                        shipping_impact = "[!] Long shipping time increases return likelihood"
+                    elif shipping_time <= 3:
+                        shipping_impact = "[OK] Fast shipping reduces return risk"
+                    else:
+                        shipping_impact = "[v] Standard shipping time"
+                    st.markdown(f"- {shipping_impact}")
+                
+                with col_b:
+                    st.markdown("**Quality Indicators:**")
+                    
+                    # Rating impact
+                    if seller_rating < 3.5:
+                        rating_impact = "[!] Low seller rating increases return risk"
+                    elif seller_rating >= 4.5:
+                        rating_impact = "[OK] High seller rating reduces returns"
+                    else:
+                        rating_impact = "[v] Acceptable seller rating"
+                    st.markdown(f"- {rating_impact}")
+                    
+                    # Review count impact
+                    if review_count < 10:
+                        review_impact = "[!] Few reviews may indicate new product"
+                    elif review_count > 100:
+                        review_impact = "[OK] Many reviews suggest established product"
+                    else:
+                        review_impact = "[v] Adequate number of reviews"
+                    st.markdown(f"- {review_impact}")
+                    
+                    # Stock impact
+                    if stock > 1000:
+                        stock_impact = "[i] High stock might indicate overstocking"
+                    else:
+                        stock_impact = "[v] Reasonable stock level"
+                    st.markdown(f"- {stock_impact}")
+                
+                # Actionable insights
+                st.markdown("### Actionable Insights")
+                
+                insights = []
+                if probability > 50:
+                    if discount > 20:
+                        insights.append("- Consider reducing discount and improving product quality perception")
+                    if seller_rating < 4.0:
+                        insights.append("- Work on improving seller rating through better customer service")
+                    if shipping_time > 5:
+                        insights.append("- Optimize shipping processes or offer expedited shipping options")
+                    if review_count < 20:
+                        insights.append("- Encourage more customer reviews to build trust")
+                else:
+                    insights.append("- Current configuration is promising for low returns")
+                    if discount < 20:
+                        insights.append("- Consider small discounts to boost sales without increasing return risk")
+                    insights.append("- Maintain high seller rating and fast shipping")
+                
+                for insight in insights:
+                    st.markdown(insight)
+                
+                # Disclaimer
+                st.markdown("---")
+                st.caption("Disclaimer: This prediction is based on machine learning model analysis and should be used as a guideline, not an absolute guarantee. Actual return behavior may vary based on multiple factors.")
+                
+            except Exception as e:
+                st.error(f"An error occurred during prediction: {str(e)}")
+                st.info("Please check that all input values are valid and try again.")
 
+else:
+    # Show instructions if model not found
+    st.warning("""
+    ### Getting Started
+    
+    To use this app, you need to:
+    
+    1. Train your model first by running your original training script
+    2. Save the model files using joblib (your script already includes this)
+    3. Place the following files in the same directory as this Streamlit app:
+       - svm_classification_model.pkl
+       - label_encoders.pkl
+       - numeric_imputer.pkl
+       - categorical_imputer.pkl (if generated)
+    
+    4. Run the Streamlit app:
+       ```bash
+       streamlit run app.py""")
