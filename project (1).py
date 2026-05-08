@@ -440,3 +440,22 @@ print(f"  - Target variable: is_returned")
 print(f"  - Best parameters: {grid_search.best_params_}")
 print(f"  - Test F1-Score: {f1:.4f}")
 print(f"  - Test AUC-ROC: {auc_roc:.4f}")
+
+# =========================
+# SAVE ADDITIONAL FEATURE INFO
+# =========================
+print("\n" + "="*60)
+print("SAVING FEATURE INFORMATION")
+print("="*60)
+
+# Save feature names and types for the Streamlit app
+feature_info = {
+    'numeric_features': numeric_features,
+    'categorical_features': categorical_features,
+    'all_features': X.columns.tolist(),
+    'feature_count': len(X.columns)
+}
+joblib.dump(feature_info, 'feature_info.pkl')
+print(f"Feature info saved with {len(X.columns)} total features")
+print(f"  - Numeric features: {len(numeric_features)}")
+print(f"  - Categorical features: {len(categorical_features)}")
