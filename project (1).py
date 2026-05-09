@@ -21,6 +21,57 @@ print(f"Loaded: {df.shape[0]:,} rows, {df.shape[1]} columns")
 df_original = df.copy()
 
 # =========================
+# REMOVE LEAKY FEATURES (DATA LEAKAGE)
+# =========================
+print("\n" + "="*60)
+print("REMOVING LEAKY FEATURES")
+print("="*60)
+
+# Columns that cause data leakage - these should NEVER be used for training
+leaky_columns = [
+    # User identifiers
+    'user_id', 'User ID', 'userid', 'customer_id', 'CustomerID', 'customer',
+    'user', 'buyer_id', 'shopper_id',
+    
+    # Product identifiers (unique per product, not predictive)
+    'product_id', 'Product ID', 'productid', 'asin', 'sku', 'item_id',
+    'product_code', 'upc', 'ean', 'isbn',
+    
+    # Seller identifiers
+    'seller_id', 'Seller ID', 'sellerid', 'vendor_id', 'vendor',
+    'merchant_id', 'supplier_id',
+    
+    # Transaction identifiers
+    'transaction_id', 'order_id', 'receipt_id', 'invoice_id',
+    'purchase_id', 'cart_id', 'session_id',
+    
+    # Date/time fields (use engineered features instead)
+    'purchase_date', 'order_date', 'date', 'timestamp', 'created_at',
+    'updated_at', 'datetime', 'order_timestamp',
+    
+    # Location data (user-specific, not product-specific)
+    'location', 'city', 'state', 'zip', 'postal_code', 'country',
+    'address', 'shipping_address', 'billing_address', 'geo_location',
+    
+    # Session and tracking data
+    'ip_address', 'user_agent', 'browser', 'browser_version',
+    'os', 'device_id', 'cookie_id', 'session_duration',
+    
+    # User behavior that happens AFTER purchase (target leakage)
+    'viewed_before', 'clicked', 'searched', 'browsing_history',
+    'cart_add_time', 'checkout_time'
+]
+
+# Count how many leaky columns exist
+leaky_cols_present = [col for col in leaky_columns if col in df.columns]
+print(f"Found {len(leaky_cols_present)} leaky columns in dataset")
+
+# Remove leaky columns from the dataframe BEFORE splitting features
+df = df.drop(columns=[col for col in leaky_columns if col in df.columns], errors='ignore')
+print(f"Removed {len([col for col in leaky_columns if col in df_original.columns])} leaky columns")
+print(f"Remaining columns: {df.shape[1]}")
+
+# =========================
 # EDA SECTION (using sample for speed)
 # =========================
 print("\n" + "="*60)
@@ -79,16 +130,18 @@ for i, col in enumerate(available_numeric[:6]):
 plt.tight_layout()
 plt.show()
 
-# Figure 3: Device and payment
+# Figure 3: Product category analysis (removed device and payment as they're user-specific)
 fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
-if 'device' in eda_sample.columns:
-    sns.barplot(x='device', y='is_returned', data=eda_sample, ax=axes[0])
-    axes[0].set_title('Return Rate by Device')
+if 'subcategory' in eda_sample.columns:
+    sns.barplot(x='subcategory', y='is_returned', data=eda_sample, ax=axes[0])
+    axes[0].set_title('Return Rate by Subcategory')
+    axes[0].tick_params(axis='x', rotation=45)
 
-if 'payment_method' in eda_sample.columns:
-    sns.barplot(x='payment_method', y='is_returned', data=eda_sample, ax=axes[1])
-    axes[1].set_title('Return Rate by Payment')
+if 'brand' in eda_sample.columns:
+    top_brands = eda_sample.groupby('brand')['is_returned'].mean().sort_values().head(10)
+    top_brands.plot(kind='barh', ax=axes[1])
+    axes[1].set_title('Top 10 Brands by Return Rate')
 
 plt.tight_layout()
 plt.show()
@@ -108,6 +161,8 @@ print(f"Removed {initial_rows - len(df)} duplicates")
 # Handle outliers conservatively
 print("\nHandling outliers...")
 numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
+# Exclude target from outlier handling
+numeric_cols = [col for col in numeric_cols if col != 'is_returned']
 initial_rows = len(df)
 
 for col in numeric_cols:
@@ -213,11 +268,11 @@ else:
 
 # Minimal hyperparameter grid for speed
 param_grid = {
-    'svm__C': [0.1, 1, 10]  # Only 3 values
+    'svm__C': [0.1, 1, 10]
 }
 
 print("\nPerforming grid search with reduced combinations...")
-cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)  # Reduced to 3 folds
+cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
 
 grid_search = GridSearchCV(
     pipeline, 
@@ -340,43 +395,28 @@ print("\n" + "="*60)
 print("FEATURE IMPORTANCE ANALYSIS")
 print("="*60)
 
-# Fix: Access the base estimator properly
-# The calibrated_model.base_estimator is the pipeline, then access the svm step
-try:
-    # For CalibratedClassifierCV, the base estimator is stored in 'base_estimator' attribute
-    if hasattr(calibrated_model, 'base_estimator'):
-        coefficients = np.abs(calibrated_model.base_estimator.named_steps['svm'].coef_[0])
-    # Alternative: if it's wrapped differently
-    elif hasattr(calibrated_model, 'estimator'):
-        coefficients = np.abs(calibrated_model.estimator.named_steps['svm'].coef_[0])
-    else:
-        # Direct access to the best_svm pipeline
-        coefficients = np.abs(best_svm.named_steps['svm'].coef_[0])
-    
-    feature_names = X.columns
-    
-    # Get top 15 features
-    feature_importance = pd.DataFrame({
-        'feature': feature_names,
-        'importance': coefficients
-    }).sort_values('importance', ascending=False).head(15)
-    
-    plt.figure(figsize=(10, 6))
-    plt.barh(feature_importance['feature'], feature_importance['importance'], color='teal')
-    plt.xlabel('Absolute Coefficient')
-    plt.title('Top 15 Most Important Features (Linear SVM)')
-    plt.gca().invert_yaxis()
-    plt.grid(True, alpha=0.3, axis='x')
-    plt.tight_layout()
-    plt.show()
-    
-    print("\nTop 10 important features:")
-    for i, row in feature_importance.head(10).iterrows():
-        print(f"  {row['feature']}: {row['importance']:.4f}")
-        
-except Exception as e:
-    print(f"\nCould not extract feature importance: {e}")
-    print("Feature importance analysis skipped.")
+# LinearSVC always has coefficients
+coefficients = np.abs(calibrated_model.estimator.named_steps['svm'].coef_[0])
+feature_names = X.columns
+
+# Get top 15 features
+feature_importance = pd.DataFrame({
+    'feature': feature_names,
+    'importance': coefficients
+}).sort_values('importance', ascending=False).head(15)
+
+plt.figure(figsize=(10, 6))
+plt.barh(feature_importance['feature'], feature_importance['importance'], color='teal')
+plt.xlabel('Absolute Coefficient')
+plt.title('Top 15 Most Important Features (Linear SVM)')
+plt.gca().invert_yaxis()
+plt.grid(True, alpha=0.3, axis='x')
+plt.tight_layout()
+plt.show()
+
+print("\nTop 10 important features:")
+for i, row in feature_importance.head(10).iterrows():
+    print(f"  {row['feature']}: {row['importance']:.4f}")
 
 # =========================
 # BUSINESS INSIGHTS
@@ -392,9 +432,9 @@ print(f"\nTotal test samples: {total_predictions:,}")
 print(f"Correct predictions: {tn + tp:,} ({(tn+tp)/total_predictions*100:.1f}%)")
 print(f"Incorrect predictions: {fp + fn:,} ({(fp+fn)/total_predictions*100:.1f}%)")
 
-# Cost analysis (adjust costs based on your business context)
-cost_false_positive = 10   # Cost of processing an unnecessary return
-cost_false_negative = 50   # Cost of customer dissatisfaction from missed return
+# Cost analysis
+cost_false_positive = 10
+cost_false_negative = 50
 
 estimated_cost = (fp * cost_false_positive) + (fn * cost_false_negative)
 max_possible_cost = (fp + fn) * max(cost_false_positive, cost_false_negative)
@@ -440,6 +480,7 @@ print(f"  - Target variable: is_returned")
 print(f"  - Best parameters: {grid_search.best_params_}")
 print(f"  - Test F1-Score: {f1:.4f}")
 print(f"  - Test AUC-ROC: {auc_roc:.4f}")
+print(f"  - Final features used: {len(X.columns)} product-only features")
 
 # =========================
 # SAVE ADDITIONAL FEATURE INFO
@@ -459,3 +500,8 @@ joblib.dump(feature_info, 'feature_info.pkl')
 print(f"Feature info saved with {len(X.columns)} total features")
 print(f"  - Numeric features: {len(numeric_features)}")
 print(f"  - Categorical features: {len(categorical_features)}")
+print(f"\nFinal feature list (product-only):")
+for i, feat in enumerate(X.columns[:10]):
+    print(f"  {i+1}. {feat}")
+if len(X.columns) > 10:
+    print(f"  ... and {len(X.columns)-10} more features")
